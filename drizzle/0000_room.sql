@@ -1,0 +1,12 @@
+CREATE TABLE seats (
+  room TEXT NOT NULL,
+  slot INTEGER NOT NULL CHECK (slot IN (1, 2)),
+  token TEXT NOT NULL UNIQUE,
+  nickname TEXT NOT NULL DEFAULT '',
+  task TEXT NOT NULL DEFAULT '',
+  started INTEGER,
+  elapsed INTEGER NOT NULL DEFAULT 0,
+  total INTEGER NOT NULL DEFAULT 0,
+  seen INTEGER,
+  PRIMARY KEY (room, slot)
+);

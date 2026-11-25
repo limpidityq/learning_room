@@ -1,0 +1,1 @@
+{"name":"animal-study-duo","private":true,"type":"module","scripts":{"build":"node build.mjs"}}

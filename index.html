@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-Hans">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="room-api" content="">
+<title>动物自习岛 · 双人房</title>
+<style>
+  :root{color-scheme:dark;font:16px/1.5 system-ui,sans-serif;background:#10192b;color:#fff3dc}
+  *{box-sizing:border-box} [hidden]{display:none!important}
+  body{margin:0} main{width:min(62rem,100% - 2rem);margin:2rem auto}
+  header{background:linear-gradient(90deg,#0d1627ee,#0d162755),url(./forest.jpg) center 57%/cover;
+    min-height:13rem;border-radius:1.25rem;padding:2rem;display:grid;align-content:end}
+  h1,h2,p{margin:0} h1{font-size:clamp(1.8rem,6vw,3rem);line-height:1.15}
+  header p{margin-top:.5rem;color:#f6d5ac}
+  section{background:#19263a;border:1px solid #ffffff21;border-radius:1rem;padding:1.25rem}
+  #room, #entry{margin-top:1rem} #room{display:grid;gap:1rem}
+  .pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+  .seat{display:grid;gap:.55rem;min-height:10rem;overflow-wrap:anywhere}
+  .seat h2{font-size:1.15rem}.sub{color:#bbc8d8}.clock{font-size:1.75rem;font-variant-numeric:tabular-nums}
+  .row{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
+  .controls{display:grid;gap:.8rem}
+  input,button{font:inherit;border-radius:.65rem;padding:.58rem .85rem;min-height:2.75rem}
+  input{border:1px solid #9aaec4;background:#10192b;color:#fff3dc;max-width:100%;flex:1 1 13rem}
+  button{border:1px solid transparent;background:#f6c786;color:#1e2434;font-weight:650;cursor:pointer}
+  button.secondary{background:#25374f;color:#fff3dc;border-color:#a6b7cf55}
+  button:disabled{opacity:.55;cursor:default} button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:3px}
+  #notice{min-height:1.6rem;margin-top:.6rem;color:#ffd4a5}
+  @media(max-width:475px){main{margin:1rem auto}header{min-height:10rem;padding:1.25rem}.pair{grid-template-columns:1fr}}
+</style>
+<main>
+  <header><h1>动物自习岛</h1><p>双人自习室</p></header>
+  <section id="entry" class="controls">
+    <p id="intro">创建一间自习室，把伙伴座位的链接发给对方。</p>
+    <div class="row"><button id="create" type="button">创建双人房</button></div>
+    <form id="join" class="row" hidden>
+      <label for="nickname">你的昵称</label><input id="nickname" required maxlength="20" autocomplete="nickname">
+      <button>加入自习</button>
+    </form>
+  </section>
+  <div id="room" hidden>
+    <div class="row"><strong id="presence"></strong><button class="secondary" id="copy" type="button" hidden>复制伙伴链接</button></div>
+    <label id="manual" hidden>伙伴链接 <input id="invite" readonly></label>
+    <div id="pair" class="pair"></div>
+    <section class="controls">
+      <form id="task-form" class="row">
+        <label for="task">我的任务</label><input id="task" maxlength="80" placeholder="例如：复习第三章">
+        <button class="secondary">保存任务</button>
+      </form>
+      <div class="row">
+        <button id="toggle" type="button">开始计时</button>
+        <button id="finish" class="secondary" type="button">结束并累计</button>
+      </div>
+    </section>
+  </div>
+  <p id="notice" role="status"></p>
+</main>
+<template id="seat"><section class="seat"><h2></h2><p class="sub"></p><p></p><strong class="clock"></strong><p class="sub"></p></section></template>
+<script type="module">
+  const byId = id => document.getElementById(id);
+  const entry = byId("entry"), room = byId("room"), notice = byId("notice");
+  const storageKey = "animal-study-duo-seat";
+  const apiOrigin = document.querySelector('meta[name="room-api"]').content || location.origin;
+  const invited = location.hash.slice(1);
+  let key = invited || localStorage.getItem(storageKey) || "";
+  let state, offset = 0, busy = false, taskLoaded = false;
+  if (invited) history.replaceState(null, "", location.pathname);
+  const cards = [1, 2].map(() => {
+    const card = byId("seat").content.firstElementChild.cloneNode(true);
+    byId("pair").append(card);
+    return card.children;
+  });
+  const clock = ms => {
+    const seconds = Math.floor(Math.max(0, ms) / 1000);
+    return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
+      .map(part => String(part).padStart(2, "0")).join(":");
+  };
+  function clocks() {
+    state?.seats.forEach((seat, i) => {
+      const running = seat.started === null ? 0 : Date.now() + offset - seat.started;
+      cards[i][3].textContent = clock(seat.elapsed + running);
+    });
+  }
+  function render() {
+    const me = state.seats.find(seat => seat.slot === state.slot);
+    entry.hidden = Boolean(me.nickname);
+    room.hidden = !me.nickname;
+    byId("create").hidden = true;
+    byId("join").hidden = Boolean(me.nickname);
+    byId("intro").textContent = "有一个座位为你留着。";
+    if (!me.nickname) return;
+    localStorage.setItem(storageKey, key);
+    if (!taskLoaded) byId("task").value = me.task;
+    taskLoaded = true;
+    byId("presence").textContent = state.seats.filter(seat => seat.online).length + " / 2 人在线";
+    byId("copy").hidden = !state.invite;
+    byId("toggle").textContent = me.started !== null ? "暂停" : me.elapsed ? "继续计时" : "开始计时";
+    byId("finish").disabled = me.started === null && !me.elapsed;
+    state.seats.forEach((seat, i) => {
+      cards[i][0].textContent = (i === 0 ? "🦌 " : "🦊 ") +
+        (seat.slot === state.slot ? "你" : seat.nickname || "伙伴座位");
+      cards[i][1].textContent = !seat.nickname ? "等待加入" : !seat.online ? "离线" :
+        seat.started !== null ? "专注中" : seat.elapsed ? "休息中" : "在线";
+      cards[i][2].textContent = seat.task || (seat.nickname ? "尚未填写任务" : "");
+      cards[i][4].textContent = seat.nickname ? "累计专注 " + clock(seat.total) : "";
+    });
+    clocks();
+  }
+  async function request(path, data, auth = "") {
+    const response = await fetch(new URL(path, apiOrigin), {
+      method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth },
+      body: JSON.stringify(data)
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    return result;
+  }
+  async function update(data = {}) {
+    state = await request("/api/seat", data, key);
+    offset = state.now - Date.now();
+    render();
+  }
+  async function perform(fn, quiet = false) {
+    if (busy) return;
+    busy = true;
+    if (!quiet) notice.textContent = "";
+    try { await fn(); }
+    catch (error) { notice.textContent = error.message || "连接失败，请重试。"; }
+    finally { busy = false; }
+  }
+  byId("create").onclick = () => perform(async () => {
+    if (!key) key = (await request("/api/room", {})).token;
+    await update();
+  });
+  byId("join").onsubmit = event => {
+    event.preventDefault();
+    void perform(() => update({ action: "join", name: byId("nickname").value }));
+  };
+  byId("task-form").onsubmit = event => {
+    event.preventDefault();
+    void perform(() => update({ action: "task", task: byId("task").value }));
+  };
+  byId("toggle").onclick = () => perform(() => update({
+    action: state.seats.find(seat => seat.slot === state.slot).started !== null ? "pause" : "start"
+  }));
+  byId("finish").onclick = () => perform(() => update({ action: "finish" }));
+  byId("copy").onclick = async () => {
+    const link = location.origin + location.pathname + "#" + state.invite;
+    try { await navigator.clipboard.writeText(link); notice.textContent = "已复制伙伴链接。"; }
+    catch { byId("manual").hidden = false; byId("invite").value = link; byId("invite").select(); }
+  };
+  if (key) void perform(async () => {
+    try { await update(); }
+    catch (error) {
+      if (error.message === "座位链接无效。") {
+        localStorage.removeItem(storageKey);
+        key = "";
+      }
+      throw error;
+    }
+  });
+  setInterval(clocks, 1000);
+  setInterval(() => { if (key) void perform(() => update(), true); }, 8000);
+</script>
+</html>
